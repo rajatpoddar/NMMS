@@ -19,7 +19,10 @@ on:
       version:
         description: "Release version (e.g., v1.0.0)"
         required: false
-        default: "latest"
+        default: ""
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -93,16 +96,38 @@ jobs:
             Write-Host "Build output size: $([math]::Round($sizeMB, 2)) MB"
           }
 
+      - name: Determine release tag name
+        shell: pwsh
+        run: |
+          # Use manual version if provided, otherwise generate a tag from timestamp + commit SHA
+          $manualVer = "${{ github.event.inputs.version }}"
+          if ($manualVer -ne "") {
+            $tag = $manualVer
+          } else {
+            $shortSha = "${{ github.sha }}".Substring(0, 7)
+            $timestamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+            $tag = "build-$timestamp-$shortSha"
+          }
+          echo "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Release tag: $tag"
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NMMS_Tracker_Windows_${{ github.event.inputs.version || 'latest' }}
+          name: NMMS_Tracker_Windows_${{ github.event.inputs.version || github.sha }}
           path: dist/NMMS_Tracker.exe
           retention-days: 30
 
-      - name: Create GitHub Release (if tagged)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: NMMS Tracker ${{ env.RELEASE_TAG }}
+          body: |
+            Automated build of [NMMS Tracking Report](https://github.com/${{ github.repository }}).
+
+            **Commit:** ${{ github.sha }}
+            **Trigger:** ${{ github.event_name }} (${{ github.ref }})
           files: dist/NMMS_Tracker.exe
-          generate_release_notes: true
+          generate_release_notes: false
+          make_latest: ${{ github.event.inputs.version != '' && 'true' || 'false' }}
