@@ -70,10 +70,6 @@ jobs:
             --hidden-import "requests" ^
             --hidden-import "getmac" ^
             --hidden-import "jinja2" ^
-            --hidden-import "flask" ^
-            --hidden-import "flask_cors" ^
-            --hidden-import "psycopg2" ^
-            --hidden-import "psycopg2.extras" ^
             --collect-all "customtkinter" ^
             --collect-all "PIL" ^
             app.py
