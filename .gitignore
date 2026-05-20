@@ -47,3 +47,4 @@ NMMS_Report_*.xlsx
 
 # Logs
 *.log
+logs/

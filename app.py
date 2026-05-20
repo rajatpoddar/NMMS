@@ -30,7 +30,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 import json
 
 # Server URL configuration - can be overridden via env var, config file, or left as default
-DEFAULT_SERVER_URL = "http://127.0.0.1:6667"
+DEFAULT_SERVER_URL = "https://nmms.palojori.in"
 SERVER_URL = os.environ.get('NMMS_SERVER_URL')
 
 if not SERVER_URL:
