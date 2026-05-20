@@ -11,6 +11,7 @@ on:
     branches: [main, master]
     paths:
       - "app.py"
+      - "requirements-client.txt"
       - "requirements.txt"
       - ".github/workflows/build-windows.yml"
   workflow_dispatch:
@@ -36,43 +37,71 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install Python dependencies
+      - name: Verify Chrome (required by Selenium)
+        shell: pwsh
+        run: |
+          $chrome = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe" -ErrorAction SilentlyContinue
+          if ($chrome) {
+            Write-Host "Chrome found: $($chrome.'(default)')"
+          } else {
+            Write-Host "Chrome not found in registry"
+            chrome --version 2>$null | ForEach-Object { Write-Host $_ }
+          }
+
+      - name: Install desktop client dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --no-cache-dir -r requirements.txt
-          pip install pyinstaller
+          pip install --no-cache-dir -r requirements-client.txt
+          pip install pyinstaller==6.11.1
 
-      - name: Build standalone executable with PyInstaller
+      - name: Verify imports
+        run: |
+          python -c "
+          print('Checking imports...')
+          import customtkinter; print('✓ customtkinter')
+          import requests; print('✓ requests')
+          from bs4 import BeautifulSoup; print('✓ bs4')
+          from selenium import webdriver; print('✓ selenium')
+          from selenium.webdriver.chrome.service import Service; print('✓ selenium.webdriver.chrome.service')
+          from selenium.webdriver.chrome.options import Options; print('✓ selenium.webdriver.chrome.options')
+          from selenium.webdriver.common.by import By; print('✓ selenium.webdriver.common.by')
+          from selenium.webdriver.support.ui import WebDriverWait, Select; print('✓ selenium.webdriver.support.ui')
+          from selenium.webdriver.support import expected_conditions as EC; print('✓ selenium.webdriver.support.expected_conditions')
+          from webdriver_manager.chrome import ChromeDriverManager; print('✓ webdriver_manager.chrome')
+          import pandas as pd; print('✓ pandas')
+          from openpyxl import Workbook; print('✓ openpyxl')
+          from openpyxl.styles import Font, PatternFill, Alignment, Border, Side; print('✓ openpyxl.styles')
+          from openpyxl.drawing.image import Image as OpenpyxlImage; print('✓ openpyxl.drawing.image')
+          from io import BytesIO; print('✓ io.BytesIO')
+          from PIL import Image as PILImage; print('✓ PIL.Image')
+          import getmac; print('✓ getmac')
+          import flask; print('✓ flask (for server template rendering in app)')
+          print('All imports successful!')
+          "
+
+      - name: Build executable with PyInstaller
         run: |
           pyinstaller ^
             --onefile ^
             --windowed ^
             --name "NMMS_Tracker" ^
-            --add-data "requirements.txt;." ^
             --hidden-import "customtkinter" ^
-            --hidden-import "PIL" ^
             --hidden-import "PIL._tkinter_finder" ^
-            --hidden-import "PIL.Image" ^
             --hidden-import "selenium" ^
-            --hidden-import "selenium.webdriver" ^
-            --hidden-import "selenium.webdriver.chrome.service" ^
-            --hidden-import "selenium.webdriver.chrome.options" ^
-            --hidden-import "selenium.webdriver.common.by" ^
-            --hidden-import "selenium.webdriver.support.ui" ^
-            --hidden-import "selenium.webdriver.support.expected_conditions" ^
             --hidden-import "webdriver_manager" ^
             --hidden-import "webdriver_manager.chrome" ^
             --hidden-import "openpyxl" ^
-            --hidden-import "openpyxl.styles" ^
-            --hidden-import "openpyxl.drawing.image" ^
             --hidden-import "pandas" ^
             --hidden-import "bs4" ^
-            --hidden-import "requests" ^
             --hidden-import "getmac" ^
             --hidden-import "jinja2" ^
-            --collect-all "customtkinter" ^
-            --collect-all "PIL" ^
             app.py
+
+      - name: List build output
+        run: |
+          dir dist\
+          echo "Build output size:"
+          powershell -Command "(Get-Item dist\NMMS_Tracker.exe).Length / 1MB | ForEach-Object { '{0:N2} MB' -f $_ }"
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
