@@ -1,0 +1,13 @@
+flask
+flask-cors
+gunicorn
+requests
+beautifulsoup4
+pandas
+customtkinter
+jinja2
+selenium
+webdriver-manager
+openpyxl
+getmac
+Pillow

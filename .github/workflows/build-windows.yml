@@ -1,0 +1,88 @@
+# ============================================
+# NMMS Tracker - Windows Installer Builder
+# ============================================
+# This workflow builds a standalone Windows .exe
+# of the desktop GUI app using PyInstaller.
+#
+# Triggers:
+#   - On push to 'main' or 'master' that changes app files
+#   - Manually via GitHub Actions UI (workflow_dispatch)
+# ============================================
+name: Build Windows Installer
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "app.py"
+      - "requirements.txt"
+      - ".github/workflows/build-windows.yml"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g., v1.0.0)"
+        required: false
+        default: "latest"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install system dependencies (Chrome for Selenium)
+        shell: pwsh
+        run: |
+          # Chrome is pre-installed on windows-latest runners
+          echo "Chrome available at:"
+          where.exe chrome 2>$null || echo "Chrome not found in PATH"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build standalone executable with PyInstaller
+        run: |
+          pyinstaller ^
+            --onefile ^
+            --windowed ^
+            --name "NMMS_Tracker" ^
+            --icon NONE ^
+            --add-data "requirements.txt;." ^
+            --hidden-import "customtkinter" ^
+            --hidden-import "PIL._tkinter_finder" ^
+            --hidden-import "selenium" ^
+            --hidden-import "webdriver_manager" ^
+            --hidden-import "openpyxl" ^
+            --hidden-import "pandas" ^
+            --hidden-import "bs4" ^
+            --hidden-import "getmac" ^
+            --hidden-import "jinja2" ^
+            --collect-all "customtkinter" ^
+            app.py
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NMMS_Tracker_Windows_${{ github.event.inputs.version || 'latest' }}
+          path: dist/NMMS_Tracker.exe
+          retention-days: 30
+
+      - name: Create GitHub Release (if tagged)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/NMMS_Tracker.exe
+          generate_release_notes: true

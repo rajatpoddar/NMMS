@@ -1,0 +1,68 @@
+# ============================================
+# NMMS Tracking Report - Production Deploy
+# Deploy on your NAS with Docker & PostgreSQL
+# ============================================
+version: "3.8"
+
+services:
+  nmms-db:
+    image: postgres:15-alpine
+    container_name: nmms-tracker-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nmms_tracker
+      POSTGRES_USER: nmms
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-nmms_password}
+    volumes:
+      - nmms_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nmms -d nmms_tracker"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - nmms_network
+
+  nmms-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nmms-tracker-server
+    restart: unless-stopped
+    ports:
+      # Use port 6667 on the host (change left side if needed)
+      - "${HOST_PORT:-6667}:6667"
+    depends_on:
+      nmms-db:
+        condition: service_healthy
+    environment:
+      # --- Server ---
+      - SERVER_PORT=6667
+      # --- PostgreSQL Connection ---
+      - DB_HOST=nmms-db
+      - DB_PORT=5432
+      - DB_NAME=nmms_tracker
+      - DB_USER=nmms
+      - DB_PASSWORD=${DB_PASSWORD:-nmms_password}
+      # --- Performance ---
+      - GUNICORN_WORKERS=2
+      - LOG_LEVEL=info
+      # --- License ---
+      - TRIAL_DAYS=30
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:6667/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - nmms_network
+
+volumes:
+  nmms_postgres_data:
+    # PostgreSQL data persists here across restarts
+
+networks:
+  nmms_network:
+    driver: bridge
