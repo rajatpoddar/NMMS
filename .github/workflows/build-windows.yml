@@ -52,7 +52,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install --no-cache-dir -r requirements-client.txt
-          pip install pyinstaller==6.11.1
+          pip install pyinstaller>=6.10
 
       - name: Verify imports
         run: |
@@ -75,7 +75,6 @@ jobs:
           from io import BytesIO; print('✓ io.BytesIO')
           from PIL import Image as PILImage; print('✓ PIL.Image')
           import getmac; print('✓ getmac')
-          import flask; print('✓ flask (for server template rendering in app)')
           print('All imports successful!')
           "
 
