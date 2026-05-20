@@ -82,22 +82,7 @@ jobs:
           "
 
       - name: Build executable with PyInstaller
-        run: |
-          pyinstaller ^
-            --onefile ^
-            --windowed ^
-            --name "NMMS_Tracker" ^
-            --hidden-import "customtkinter" ^
-            --hidden-import "PIL._tkinter_finder" ^
-            --hidden-import "selenium" ^
-            --hidden-import "webdriver_manager" ^
-            --hidden-import "webdriver_manager.chrome" ^
-            --hidden-import "openpyxl" ^
-            --hidden-import "pandas" ^
-            --hidden-import "bs4" ^
-            --hidden-import "getmac" ^
-            --hidden-import "jinja2" ^
-            app.py
+        run: pyinstaller --onefile --windowed --name "NMMS_Tracker" --hidden-import customtkinter --hidden-import PIL._tkinter_finder --hidden-import selenium --hidden-import webdriver_manager --hidden-import webdriver_manager.chrome --hidden-import openpyxl --hidden-import pandas --hidden-import bs4 --hidden-import getmac --hidden-import jinja2 app.py
 
       - name: List build output
         shell: pwsh
