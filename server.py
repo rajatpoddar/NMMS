@@ -11,7 +11,8 @@ from contextlib import contextmanager
 # ── Scraper Worker ──
 from scraper_worker import (
     start_extraction, read_task, cancel_extraction,
-    init_dirs as init_scraper_dirs, delete_old_tasks
+    init_dirs as init_scraper_dirs, delete_old_tasks,
+    TASKS_DIR
 )
 
 app = Flask(__name__)
@@ -697,6 +698,7 @@ EXTRACTION_HTML = """
             --accent: #2563eb;
             --success: #059669;
             --error: #dc2626;
+            --warning: #d97706;
             --bg: #f1f5f9;
             --card-bg: #ffffff;
             --text: #0f172a;
@@ -719,6 +721,43 @@ EXTRACTION_HTML = """
         }
         .app-header h1 { font-size: 1.3rem; font-weight: 700; margin: 0; }
         .app-header small { opacity: 0.7; font-size: 0.75rem; }
+
+        /* Stats Bar */
+        .stats-bar {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            padding: 10px 16px;
+            background: #1e293b;
+            color: #cbd5e1;
+            font-size: 0.8rem;
+            flex-wrap: wrap;
+        }
+        .stats-bar .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .stats-bar .stat-num {
+            font-weight: 700;
+            font-size: 1rem;
+            min-width: 20px;
+            text-align: center;
+        }
+        .stats-bar .stat-num.running { color: #60a5fa; }
+        .stats-bar .stat-num.queued { color: #fbbf24; }
+        .stats-bar .stat-num.done { color: #34d399; }
+        .stats-bar .stat-num.max { color: #94a3b8; }
+        .stat-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        .stat-dot.blue { background: #60a5fa; }
+        .stat-dot.yellow { background: #fbbf24; animation: pulse 1.5s ease-in-out infinite; }
+        .stat-dot.green { background: #34d399; }
+
         .container { max-width: 600px; margin: 0 auto; padding: 16px; }
         .card {
             background: var(--card-bg);
@@ -757,15 +796,20 @@ EXTRACTION_HTML = """
             width: 100%;
             transition: all 0.2s;
             cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
         }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .btn-primary { background: var(--accent); color: white; }
-        .btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+        .btn-primary:hover:not(:disabled) { background: #1d4ed8; box-shadow: 0 4px 12px rgba(37,99,235,0.3); }
         .btn-success { background: var(--success); color: white; }
-        .btn-success:hover:not(:disabled) { background: #047857; }
+        .btn-success:hover:not(:disabled) { background: #047857; box-shadow: 0 4px 12px rgba(5,150,105,0.3); }
         .btn-danger { background: var(--error); color: white; }
         .btn-danger:hover:not(:disabled) { background: #b91c1c; }
         .btn-outline { background: transparent; border: 1.5px solid var(--border); color: var(--text-sec); }
+        .btn-outline:hover:not(:disabled) { background: #f8fafc; border-color: #94a3b8; }
         .progress-container {
             background: #e2e8f0;
             border-radius: 6px;
@@ -780,7 +824,10 @@ EXTRACTION_HTML = """
             transition: width 0.5s ease;
             width: 0%;
         }
+        .progress-bar.animated { background: linear-gradient(90deg, var(--accent), var(--success), var(--accent)); background-size: 200% 100%; animation: shimmer 2s ease-in-out infinite; }
+        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
         .progress-text { font-size: 0.85rem; color: var(--text-sec); margin-top: 4px; }
+        .progress-time { font-size: 0.75rem; color: var(--text-sec); margin-top: 2px; opacity: 0.8; }
         .log-area {
             background: #0f172a;
             color: #e2e8f0;
@@ -808,15 +855,18 @@ EXTRACTION_HTML = """
             font-weight: 600;
         }
         .badge-running { background: #dbeafe; color: #1d4ed8; }
+        .badge-queued { background: #fef3c7; color: #92400e; }
         .badge-done { background: #d4edda; color: #155724; }
         .badge-error { background: #f8d7da; color: #721c24; }
         .badge-pending { background: #e2e3e5; color: #383d41; }
+        .badge-cancelled { background: #e2e3e5; color: #6c757d; }
         .row { display: flex; gap: 12px; }
         .row .col { flex: 1; }
         @media (max-width: 480px) {
             .row { flex-direction: column; }
             .container { padding: 12px; }
             .card { padding: 16px; }
+            .stats-bar { gap: 12px; font-size: 0.75rem; }
         }
         .spinner {
             display: inline-block;
@@ -828,19 +878,55 @@ EXTRACTION_HTML = """
             animation: spin 0.6s linear infinite;
             vertical-align: middle;
         }
+        .spinner-sm {
+            width: 14px;
+            height: 14px;
+            border-width: 2px;
+        }
         @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         .hidden { display: none !important; }
         .mt-2 { margin-top: 8px; }
         .mt-3 { margin-top: 16px; }
         .mb-2 { margin-bottom: 8px; }
         .text-center { text-align: center; }
         .gap-2 { gap: 8px; }
+        .text-muted { color: var(--text-sec); }
+        .fw-bold { font-weight: 700; }
+        .queue-pos {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            background: #fef3c7;
+            color: #92400e;
+            border-radius: 50px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
     <div class="app-header">
         <h1>NMMS Tracking Report</h1>
         <small>Web Extraction Dashboard</small>
+    </div>
+
+    <!-- Stats Bar -->
+    <div class="stats-bar" id="statsBar">
+        <div class="stat-item">
+            <span class="stat-dot blue"></span>
+            Running: <span class="stat-num running" id="statRunning">0</span>
+            <span class="text-muted" style="opacity:0.5;">/ <span id="statMax">5</span></span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-dot yellow"></span>
+            Queued: <span class="stat-num queued" id="statQueued">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-dot green"></span>
+            Completed: <span class="stat-num done" id="statCompleted">0</span>
+        </div>
     </div>
 
     <div class="container">
@@ -872,8 +958,9 @@ EXTRACTION_HTML = """
                 <input type="text" class="form-control" id="dateInput" placeholder="DD/MM/YYYY">
             </div>
             <div class="mt-2">
-                <button class="btn btn-primary" id="startBtn" onclick="startExtraction()">
-                    Start Extraction
+                <button class="btn btn-primary" id="startBtn">
+                    <span id="btnText">Start Extraction</span>
+                    <span class="spinner spinner-sm hidden" id="btnSpinner"></span>
                 </button>
             </div>
         </div>
@@ -884,10 +971,21 @@ EXTRACTION_HTML = """
                 Progress
                 <span class="status-badge badge-pending" id="statusBadge">Pending</span>
             </div>
+
+            <!-- Queue position banner -->
+            <div class="hidden" id="queueBanner" style="margin-bottom:12px;">
+                <div class="queue-pos">
+                    <span class="spinner spinner-sm"></span>
+                    Queue Position: #<span id="queuePos">1</span>
+                </div>
+                <div class="progress-text" style="margin-top:4px;">Waiting for a free slot... You will be started automatically.</div>
+            </div>
+
             <div class="progress-container">
                 <div class="progress-bar" id="progressBar"></div>
             </div>
             <div class="progress-text" id="progressText">Waiting...</div>
+            <div class="progress-time" id="elapsedTime"></div>
 
             <div class="mt-3">
                 <div class="card-title">Activity Log</div>
@@ -895,15 +993,17 @@ EXTRACTION_HTML = """
             </div>
 
             <div class="mt-3 hidden" id="downloadSection">
-                <a class="btn btn-success" id="downloadBtn">Download Excel Report</a>
+                <a class="btn btn-success" id="downloadBtn">
+                    <span>&#11015;</span> Download Excel Report
+                </a>
             </div>
 
             <div class="row mt-2 gap-2" id="actionButtons">
                 <div class="col">
-                    <button class="btn btn-outline" id="backBtn" onclick="resetForm()">New Extraction</button>
+                    <button class="btn btn-outline" id="backBtn">New Extraction</button>
                 </div>
                 <div class="col">
-                    <button class="btn btn-danger hidden" id="cancelBtn" onclick="cancelExtraction()">Cancel</button>
+                    <button class="btn btn-danger hidden" id="cancelBtn">Cancel</button>
                 </div>
             </div>
         </div>
@@ -916,10 +1016,45 @@ EXTRACTION_HTML = """
     <script>
         let currentTaskId = null;
         let pollInterval = null;
+        let statsInterval = null;
+        let elapsedInterval = null;
+        let startTime = null;
         let isStarting = false;
 
+        // ── Initialization ──
+        document.addEventListener('DOMContentLoaded', function() {
+            const now = new Date();
+            document.getElementById('dateInput').value =
+                String(now.getDate()).padStart(2, '0') + '/' +
+                String(now.getMonth() + 1).padStart(2, '0') + '/' +
+                now.getFullYear();
+
+            // Bind events using addEventListener (safer than onclick)
+            document.getElementById('startBtn').addEventListener('click', startExtraction);
+            document.getElementById('cancelBtn').addEventListener('click', cancelExtraction);
+            document.getElementById('backBtn').addEventListener('click', resetForm);
+
+            // Start stats polling immediately
+            statsInterval = setInterval(fetchStats, 3000);
+            fetchStats();
+        });
+
+        // ── Stats ──
+        function fetchStats() {
+            fetch('/api/extraction/stats')
+                .then(r => r.json())
+                .then(s => {
+                    document.getElementById('statRunning').textContent = s.running;
+                    document.getElementById('statQueued').textContent = s.queued;
+                    document.getElementById('statCompleted').textContent = s.completed_today || 0;
+                    document.getElementById('statMax').textContent = s.max_concurrent;
+                })
+                .catch(() => {});
+        }
+
+        // ── Start Extraction ──
         function startExtraction() {
-            if (isStarting) return;  // prevent double-click
+            if (isStarting) return;
 
             const state = document.getElementById('stateSelect').value;
             const district = document.getElementById('districtInput').value.trim().toUpperCase();
@@ -932,65 +1067,90 @@ EXTRACTION_HTML = """
             }
 
             isStarting = true;
+            const btn = document.getElementById('startBtn');
+            btn.disabled = true;
+            document.getElementById('btnText').textContent = 'Starting...';
+            document.getElementById('btnSpinner').classList.remove('hidden');
 
-            // Show progress card
+            // Pre-show progress card for immediate feedback
             document.getElementById('formCard').classList.add('hidden');
             document.getElementById('progressCard').classList.remove('hidden');
             document.getElementById('cancelBtn').classList.remove('hidden');
+            document.getElementById('cancelBtn').disabled = false;
             document.getElementById('downloadSection').classList.add('hidden');
-            document.getElementById('startBtn').disabled = true;
+            document.getElementById('queueBanner').classList.add('hidden');
 
             updateStatus('pending', 'Starting...', []);
-            setProgress(0, 'Starting extraction...');
+            setProgress(0, 'Sending request...');
+            startTimer();
 
             fetch('/api/extraction/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ state, district, block, date })
             })
-            .then(r => { if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Server error') }); return r.json(); })
+            .then(r => {
+                if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Server error (' + r.status + ')'); });
+                return r.json();
+            })
             .then(data => {
                 currentTaskId = data.task_id;
+                appendLog('Task created: ' + currentTaskId.substring(0, 8) + '...');
                 pollInterval = setInterval(() => pollStatus(currentTaskId), 2000);
             })
             .catch(err => {
-                appendLog('Error: ' + err.message);
+                appendLog('Failed: ' + err.message);
                 updateStatus('error', 'Failed to start', null);
                 setProgress(0, 'Failed: ' + err.message);
                 document.getElementById('cancelBtn').classList.add('hidden');
+                stopTimer();
                 isStarting = false;
+                btn.disabled = false;
+                document.getElementById('btnText').textContent = 'Start Extraction';
+                document.getElementById('btnSpinner').classList.add('hidden');
             });
         }
 
+        // ── Poll Status ──
         function pollStatus(taskId) {
-            const now = Date.now();
-            fetch('/api/extraction/status/' + taskId + '?_=' + now)
+            fetch('/api/extraction/status/' + taskId + '?_=' + Date.now())
             .then(r => { if (!r.ok) throw new Error('Status check failed'); return r.json(); })
             .then(task => {
-                updateStatus(task.state, task.progress.message, task.log);
-                setProgress(task.progress.pct, task.progress.message);
+                updateUI(task);
 
                 if (task.state === 'done') {
                     clearInterval(pollInterval);
+                    stopTimer();
                     isStarting = false;
                     document.getElementById('downloadBtn').href = '/api/extraction/download/' + taskId;
                     document.getElementById('downloadSection').classList.remove('hidden');
                     document.getElementById('cancelBtn').classList.add('hidden');
                     document.getElementById('startBtn').disabled = false;
+                    document.getElementById('btnText').textContent = 'Start Extraction';
+                    document.getElementById('btnSpinner').classList.add('hidden');
+                    fetchStats();
                 } else if (task.state === 'error') {
                     clearInterval(pollInterval);
+                    stopTimer();
                     isStarting = false;
                     document.getElementById('cancelBtn').classList.add('hidden');
                     document.getElementById('startBtn').disabled = false;
-                    // Show error details
+                    document.getElementById('btnText').textContent = 'Start Extraction';
+                    document.getElementById('btnSpinner').classList.add('hidden');
                     if (task.error) {
-                        appendLog('\n--- ERROR DETAILS ---\n' + task.error);
+                        appendLog('\n--- ERROR DETAILS ---');
+                        // Show first few lines of traceback
+                        const lines = task.error.split('\n').slice(0, 10);
+                        lines.forEach(l => appendLog(l));
                     }
                 } else if (task.state === 'cancelled') {
                     clearInterval(pollInterval);
+                    stopTimer();
                     isStarting = false;
                     document.getElementById('cancelBtn').classList.add('hidden');
                     document.getElementById('startBtn').disabled = false;
+                    document.getElementById('btnText').textContent = 'Start Extraction';
+                    document.getElementById('btnSpinner').classList.add('hidden');
                 }
             })
             .catch(err => {
@@ -998,6 +1158,112 @@ EXTRACTION_HTML = """
             });
         }
 
+        // ── Update UI from Task State ──
+        function updateUI(task) {
+            const state = task.state;
+            const pct = task.progress.pct;
+            const msg = task.progress.message || '';
+            const log = task.log || [];
+
+            // Badge
+            const badge = document.getElementById('statusBadge');
+            badge.className = 'status-badge badge-' + state;
+            const labels = {
+                pending: 'Pending', queued: 'Queued', running: 'Running',
+                done: 'Complete', error: 'Error', cancelled: 'Cancelled'
+            };
+            const showSpinner = state === 'running' || state === 'queued';
+            badge.innerHTML = (showSpinner ? '<span class="spinner"></span> ' : '') + (labels[state] || state);
+
+            // Queue banner
+            const qb = document.getElementById('queueBanner');
+            if (state === 'queued') {
+                qb.classList.remove('hidden');
+                // Calculate queue position
+                let pos = 1;
+                fetch('/api/extraction/stats')
+                    .then(r => r.json())
+                    .then(s => {
+                        const q = s.queued || 0;
+                        document.getElementById('queuePos').textContent = q > 0 ? q : 1;
+                    })
+                    .catch(() => {});
+            } else {
+                qb.classList.add('hidden');
+            }
+
+            // Progress bar styling
+            const bar = document.getElementById('progressBar');
+            if (state === 'queued') {
+                bar.style.width = '0%';
+                bar.classList.remove('animated');
+            } else if (state === 'running' && pct > 0 && pct < 100) {
+                bar.style.width = Math.round(pct) + '%';
+                bar.classList.add('animated');
+            } else if (state === 'running' && pct === 0) {
+                bar.style.width = '5%';
+                bar.classList.add('animated');
+            } else if (state === 'done') {
+                bar.style.width = '100%';
+                bar.classList.remove('animated');
+            } else {
+                bar.style.width = Math.round(pct) + '%';
+                bar.classList.remove('animated');
+            }
+
+            // Progress text
+            document.getElementById('progressText').textContent = msg || '';
+
+            // Log
+            if (log && log.length) {
+                document.getElementById('logArea').textContent = log.join('\n');
+                document.getElementById('logArea').scrollTop = document.getElementById('logArea').scrollHeight;
+            }
+        }
+
+        // ── Timer ──
+        function startTimer() {
+            startTime = Date.now();
+            updateElapsed();
+            elapsedInterval = setInterval(updateElapsed, 1000);
+        }
+
+        function stopTimer() {
+            if (elapsedInterval) {
+                clearInterval(elapsedInterval);
+                elapsedInterval = null;
+            }
+            updateElapsed();
+        }
+
+        function updateElapsed() {
+            if (!startTime) {
+                document.getElementById('elapsedTime').textContent = '';
+                return;
+            }
+            const seconds = Math.floor((Date.now() - startTime) / 1000);
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            const elapsed = mins + 'm ' + secs + 's';
+
+            // Show estimated time remaining based on progress
+            const bar = document.getElementById('progressBar');
+            const pctText = document.getElementById('progressText').textContent;
+            const pct = parseFloat(bar.style.width) || 0;
+
+            let timeStr = 'Elapsed: ' + elapsed;
+            if (pct > 5 && pct < 95) {
+                const total = seconds / (pct / 100);
+                const remaining = Math.max(0, Math.round(total - seconds));
+                const rm = Math.floor(remaining / 60);
+                const rs = remaining % 60;
+                timeStr += ' &middot; ETA: ~' + rm + 'm ' + rs + 's';
+            }
+
+            document.getElementById('elapsedTime').innerHTML = timeStr;
+        }
+
+        // ── Cancel ──
         function cancelExtraction() {
             if (!currentTaskId) return;
             if (!confirm('Are you sure you want to cancel the extraction?')) return;
@@ -1006,55 +1272,42 @@ EXTRACTION_HTML = """
             fetch('/api/extraction/cancel/' + currentTaskId, { method: 'POST' })
             .then(r => r.json())
             .then(() => {
-                updateStatus('cancelled', 'Cancelled', ['Cancelling...']);
+                updateUI({ state: 'cancelled', progress: { pct: 0, message: 'Cancelled' }, log: ['Cancelling...'] });
             });
         }
 
+        // ── Reset ──
         function resetForm() {
             if (pollInterval) {
                 clearInterval(pollInterval);
                 pollInterval = null;
             }
+            stopTimer();
             currentTaskId = null;
             isStarting = false;
+            startTime = null;
+
             document.getElementById('formCard').classList.remove('hidden');
             document.getElementById('progressCard').classList.add('hidden');
             document.getElementById('startBtn').disabled = false;
             document.getElementById('cancelBtn').disabled = false;
+            document.getElementById('btnText').textContent = 'Start Extraction';
+            document.getElementById('btnSpinner').classList.add('hidden');
+            document.getElementById('queueBanner').classList.add('hidden');
             setProgress(0, '');
         }
 
+        // ── Helpers ──
         function appendLog(text) {
             const el = document.getElementById('logArea');
             el.textContent += (el.textContent ? '\n' : '') + text;
             el.scrollTop = el.scrollHeight;
         }
 
-        function updateStatus(state, message, log) {
-            const badge = document.getElementById('statusBadge');
-            badge.className = 'status-badge badge-' + state;
-            const labels = { pending: 'Pending', running: 'Running', done: 'Complete', error: 'Error', cancelled: 'Cancelled' };
-            badge.innerHTML = (state === 'running' ? '<span class="spinner"></span> ' : '') + (labels[state] || state);
-
-            if (log && log.length) {
-                document.getElementById('logArea').textContent = log.join('\n');
-                document.getElementById('logArea').scrollTop = document.getElementById('logArea').scrollHeight;
-            }
-        }
-
         function setProgress(pct, msg) {
             document.getElementById('progressBar').style.width = Math.round(pct) + '%';
             document.getElementById('progressText').textContent = msg || '';
         }
-
-        // Set default date
-        document.addEventListener('DOMContentLoaded', function() {
-            const now = new Date();
-            const dd = String(now.getDate()).padStart(2, '0');
-            const mm = String(now.getMonth() + 1).padStart(2, '0');
-            const yyyy = now.getFullYear();
-            document.getElementById('dateInput').value = dd + '/' + mm + '/' + yyyy;
-        });
     </script>
 </body>
 </html>
@@ -1135,6 +1388,38 @@ def api_cancel_extraction(task_id):
     if ok:
         return jsonify({'status': 'cancelled'})
     return jsonify({'error': 'Task not found or already completed'}), 400
+
+
+@app.route('/api/extraction/stats')
+def api_extraction_stats():
+    """Get live stats about running/queued/completed extractions."""
+    running = 0
+    queued = 0
+    completed_today = 0
+    today = datetime.now().strftime('%Y-%m-%d')
+
+    for fname in os.listdir(TASKS_DIR):
+        if not fname.endswith('.json'):
+            continue
+        task = read_task(fname.replace('.json', ''))
+        if not task:
+            continue
+        state = task.get('state', '')
+        if state == 'running':
+            running += 1
+        elif state == 'queued':
+            queued += 1
+        elif state in ('done',):
+            created = task.get('created_at', '')
+            if created.startswith(today):
+                completed_today += 1
+
+    return jsonify({
+        'running': running,
+        'queued': queued,
+        'max_concurrent': int(os.environ.get('MAX_CONCURRENT_TASKS', '5')),
+        'completed_today': completed_today,
+    })
 
 
 @app.route('/admin/extend/<mac>')

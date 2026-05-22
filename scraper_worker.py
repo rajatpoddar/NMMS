@@ -74,6 +74,8 @@ def init_dirs():
                 shutil.rmtree(item_path, ignore_errors=True)
             except Exception:
                 pass
+    # Process any queued tasks from a previous restart
+    _process_queue()
 
 
 def _task_file(task_id):
@@ -636,50 +638,101 @@ def run_extraction_task(task_id, state, district, block, date):
             write_task(task)
 
 
-def start_extraction(state, district, block, date):
+def _try_start_task(task_id):
     """
-    Start extraction in background thread.
-    Returns task_id or raises RuntimeError if max concurrent tasks reached.
+    Try to start a pending/queued task immediately.
+    Acquires semaphore, updates state to 'running', starts thread.
+    Returns True if started, False if no slot available or task not found.
     """
-    task_id = create_task(state, district, block, date)
-
-    # Try to acquire semaphore slot; fail fast if busy
+    # Try to acquire a semaphore slot
     acquired = _task_semaphore.acquire(blocking=False)
     if not acquired:
-        # Remove the pending task we just created
-        try:
-            os.remove(_task_file(task_id))
-        except OSError:
-            pass
-        raise RuntimeError(
-            f"Server busy: {MAX_CONCURRENT_TASKS} extraction(s) already running. "
-            "Please wait for one to complete before starting another."
-        )
+        return False
 
-    def _release_and_run(*args, **kwargs):
-        """Wrapper that releases the semaphore when the task finishes."""
+    task = read_task(task_id)
+    if not task or task['state'] not in ('pending', 'queued'):
+        # Task no longer exists or already started/completed — release slot
+        _task_semaphore.release()
+        return False
+
+    # Mark as running
+    task['state'] = 'running'
+    task['progress']['message'] = 'Starting...'
+    write_task(task)
+
+    params = task['params']
+
+    def _run_and_release(tid, s, d, b, dt):
+        """Run task, then release slot and try next queued task."""
         try:
-            run_extraction_task(*args, **kwargs)
+            run_extraction_task(tid, s, d, b, dt)
         finally:
             _task_semaphore.release()
+            _process_queue()  # Start the next queued task
 
     thread = threading.Thread(
-        target=_release_and_run,
-        args=(task_id, state, district, block, date),
+        target=_run_and_release,
+        args=(task_id, params['state'], params['district'], params['block'], params['date']),
         daemon=True
     )
     _active_tasks[task_id] = thread
     thread.start()
+    return True
+
+
+def _process_queue():
+    """Scan all queued tasks and start the next one if a slot is available."""
+    try:
+        # Collect all queued tasks
+        queued = []
+        with _tasks_lock:
+            for fname in os.listdir(TASKS_DIR):
+                if not fname.endswith('.json'):
+                    continue
+                task = read_task(fname.replace('.json', ''))
+                if task and task['state'] == 'queued':
+                    queued.append(task)
+
+        if not queued:
+            return
+
+        # Sort oldest first (FIFO)
+        queued.sort(key=lambda t: t['created_at'])
+
+        # Try to start the first queued task
+        _try_start_task(queued[0]['task_id'])
+
+    except Exception:
+        traceback.print_exc()
+
+
+def start_extraction(state, district, block, date):
+    """
+    Start extraction in background thread.
+    If max concurrent tasks reached, the task is queued automatically.
+    Returns task_id.
+    """
+    task_id = create_task(state, district, block, date)
+
+    # Try to start immediately
+    started = _try_start_task(task_id)
+    if not started:
+        # No slot — queue the task
+        task = read_task(task_id)
+        task['state'] = 'queued'
+        task['progress']['message'] = 'Queued — waiting for a free slot...'
+        write_task(task)
+        append_task_log(task_id, 'All slots busy. Task queued and will start automatically when a slot opens.', 'info')
 
     return task_id
 
 
 def cancel_extraction(task_id):
-    """Mark a task as cancelled. The thread checks stop_check periodically."""
+    """Mark a task as cancelled. Works for queued and running tasks."""
     task = read_task(task_id)
-    if task and task['state'] in ('pending', 'running'):
+    if task and task['state'] in ('pending', 'queued', 'running'):
         task['state'] = 'cancelled'
-        task['progress']['message'] = 'Cancelling...'
+        task['progress']['message'] = 'Cancelled'
         write_task(task)
         return True
     return False
