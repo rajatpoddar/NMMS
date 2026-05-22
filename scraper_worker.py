@@ -41,7 +41,7 @@ import requests
 SELENIUM_URL = os.environ.get('SELENIUM_URL', 'http://selenium-chrome:4444/wd/hub')
 OUTPUT_DIR = os.environ.get('NMMS_OUTPUT_DIR', '/app/outputs')
 TASKS_DIR = os.environ.get('NMMS_TASKS_DIR', '/app/tasks')
-MAX_CONCURRENT_TASKS = int(os.environ.get('MAX_CONCURRENT_TASKS', '2'))
+MAX_CONCURRENT_TASKS = int(os.environ.get('MAX_CONCURRENT_TASKS', '5'))
 
 NREGA_BASE_URL = "https://mnregaweb4.dord.gov.in/netnrega"
 NREGA_NMMS_URL = (
