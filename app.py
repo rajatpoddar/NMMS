@@ -593,11 +593,14 @@ class ScraperThread(QThread):
                     return el.text.strip() if el else "N/A"
 
                 header_text_val = get_text('ctl00_ContentPlaceHolder1_lbl_dtl')
+
+                # Panchayat is in lbl_msg, not lbl_dtl
+                msg_text_val = get_text('ctl00_ContentPlaceHolder1_lbl_msg')
                 panchayat_val = ''
-                if 'Panchayat :' in header_text_val:
-                    panchayat_val = header_text_val.split('Panchayat :')[-1].split('|')[0].strip()
-                elif 'Gram Panchayat :' in header_text_val:
-                    panchayat_val = header_text_val.split('Gram Panchayat :')[-1].split('|')[0].strip()
+                if 'Panchayat :' in msg_text_val:
+                    panchayat_val = msg_text_val.split('Panchayat :')[-1].strip()
+                elif 'Panchayat:' in msg_text_val:
+                    panchayat_val = msg_text_val.split('Panchayat:')[-1].strip()
 
                 mr.update({
                     "header_text": header_text_val,
