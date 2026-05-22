@@ -1092,7 +1092,10 @@ EXTRACTION_HTML = """
             document.getElementById('downloadSection').classList.add('hidden');
             document.getElementById('queueBanner').classList.add('hidden');
 
-            updateStatus('pending', 'Starting...', []);
+            // Update badge directly
+            const badge = document.getElementById('statusBadge');
+            badge.className = 'status-badge badge-pending';
+            badge.innerHTML = 'Pending';
             setProgress(0, 'Sending request...');
             startTimer();
 
@@ -1112,7 +1115,10 @@ EXTRACTION_HTML = """
             })
             .catch(err => {
                 appendLog('Failed: ' + err.message);
-                updateStatus('error', 'Failed to start', null);
+                // Update badge directly
+                const badge = document.getElementById('statusBadge');
+                badge.className = 'status-badge badge-error';
+                badge.innerHTML = 'Error';
                 setProgress(0, 'Failed: ' + err.message);
                 document.getElementById('cancelBtn').classList.add('hidden');
                 stopTimer();
