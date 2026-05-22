@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify, render_template_string, redirect, url_for
+from flask import Flask, request, jsonify, render_template_string, redirect, url_for, send_file
 from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 import psycopg2
@@ -7,6 +7,12 @@ import psycopg2.extras
 import psycopg2.errors
 from datetime import datetime, timedelta
 from contextlib import contextmanager
+
+# ── Scraper Worker ──
+from scraper_worker import (
+    start_extraction, read_task, cancel_extraction,
+    init_dirs as init_scraper_dirs, delete_old_tasks
+)
 
 app = Flask(__name__)
 
@@ -21,6 +27,9 @@ app.wsgi_app = ProxyFix(
 )
 
 CORS(app)
+
+# Initialize scraper worker directories (for task tracking / Excel output)
+init_scraper_dirs()
 
 # PostgreSQL Configuration from environment variables
 SERVER_HOST = os.environ.get('SERVER_HOST', '0.0.0.0')
@@ -669,6 +678,463 @@ def admin_toggle(mac):
         c = conn.cursor()
         c.execute("UPDATE users SET is_active = NOT is_active WHERE mac_id=%s", (mac,))
     return redirect(url_for('admin_dashboard'))
+
+
+# ==========================================
+# WEB EXTRACTION DASHBOARD — Mobile-friendly UI
+# ==========================================
+EXTRACTION_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>NMMS Extraction</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #0f172a;
+            --accent: #2563eb;
+            --success: #059669;
+            --error: #dc2626;
+            --bg: #f1f5f9;
+            --card-bg: #ffffff;
+            --text: #0f172a;
+            --text-sec: #64748b;
+            --border: #e2e8f0;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            min-height: 100vh;
+        }
+        .app-header {
+            background: linear-gradient(135deg, #0f172a 0%, #1a2744 100%);
+            color: white;
+            padding: 16px 20px;
+            text-align: center;
+        }
+        .app-header h1 { font-size: 1.3rem; font-weight: 700; margin: 0; }
+        .app-header small { opacity: 0.7; font-size: 0.75rem; }
+        .container { max-width: 600px; margin: 0 auto; padding: 16px; }
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        .card-title {
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-sec);
+            margin-bottom: 12px;
+        }
+        .form-control, .form-select {
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 14px;
+            font-size: 14px;
+            text-transform: uppercase;
+            transition: border-color 0.2s;
+        }
+        .form-control:focus, .form-select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+        }
+        label { font-size: 0.8rem; font-weight: 600; margin-bottom: 4px; display: block; }
+        .btn {
+            border: none;
+            border-radius: 8px;
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 600;
+            width: 100%;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-primary { background: var(--accent); color: white; }
+        .btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+        .btn-success { background: var(--success); color: white; }
+        .btn-success:hover:not(:disabled) { background: #047857; }
+        .btn-danger { background: var(--error); color: white; }
+        .btn-danger:hover:not(:disabled) { background: #b91c1c; }
+        .btn-outline { background: transparent; border: 1.5px solid var(--border); color: var(--text-sec); }
+        .progress-container {
+            background: #e2e8f0;
+            border-radius: 6px;
+            height: 10px;
+            overflow: hidden;
+            margin: 12px 0;
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), var(--success));
+            border-radius: 6px;
+            transition: width 0.5s ease;
+            width: 0%;
+        }
+        .progress-text { font-size: 0.85rem; color: var(--text-sec); margin-top: 4px; }
+        .log-area {
+            background: #0f172a;
+            color: #e2e8f0;
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'SF Mono', 'Consolas', monospace;
+            font-size: 0.75rem;
+            line-height: 1.6;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .log-area:empty::before {
+            content: "Activity log will appear here...";
+            color: #64748b;
+        }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 50px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .badge-running { background: #dbeafe; color: #1d4ed8; }
+        .badge-done { background: #d4edda; color: #155724; }
+        .badge-error { background: #f8d7da; color: #721c24; }
+        .badge-pending { background: #e2e3e5; color: #383d41; }
+        .row { display: flex; gap: 12px; }
+        .row .col { flex: 1; }
+        @media (max-width: 480px) {
+            .row { flex-direction: column; }
+            .container { padding: 12px; }
+            .card { padding: 16px; }
+        }
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            vertical-align: middle;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .hidden { display: none !important; }
+        .mt-2 { margin-top: 8px; }
+        .mt-3 { margin-top: 16px; }
+        .mb-2 { margin-bottom: 8px; }
+        .text-center { text-align: center; }
+        .gap-2 { gap: 8px; }
+    </style>
+</head>
+<body>
+    <div class="app-header">
+        <h1>NMMS Tracking Report</h1>
+        <small>Web Extraction Dashboard</small>
+    </div>
+
+    <div class="container">
+        <!-- Form Card -->
+        <div class="card" id="formCard">
+            <div class="card-title">Extraction Parameters</div>
+            <div class="mb-2">
+                <label>State</label>
+                <select class="form-select" id="stateSelect">
+                    <option value="">-- SELECT STATE --</option>
+                    <option value="JHARKHAND">JHARKHAND</option>
+                    <option value="BIHAR">BIHAR</option>
+                    <option value="WEST BENGAL">WEST BENGAL</option>
+                    <option value="UTTAR PRADESH">UTTAR PRADESH</option>
+                </select>
+            </div>
+            <div class="row">
+                <div class="col mb-2">
+                    <label>District</label>
+                    <input type="text" class="form-control" id="districtInput" placeholder="E.G. DEOGHAR">
+                </div>
+                <div class="col mb-2">
+                    <label>Block</label>
+                    <input type="text" class="form-control" id="blockInput" placeholder="E.G. PALOJORI">
+                </div>
+            </div>
+            <div class="mb-2">
+                <label>Date</label>
+                <input type="text" class="form-control" id="dateInput" placeholder="DD/MM/YYYY">
+            </div>
+            <div class="mt-2">
+                <button class="btn btn-primary" id="startBtn" onclick="startExtraction()">
+                    Start Extraction
+                </button>
+            </div>
+        </div>
+
+        <!-- Progress Card -->
+        <div class="card hidden" id="progressCard">
+            <div class="card-title">
+                Progress
+                <span class="status-badge badge-pending" id="statusBadge">Pending</span>
+            </div>
+            <div class="progress-container">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+            <div class="progress-text" id="progressText">Waiting...</div>
+
+            <div class="mt-3">
+                <div class="card-title">Activity Log</div>
+                <div class="log-area" id="logArea"></div>
+            </div>
+
+            <div class="mt-3 hidden" id="downloadSection">
+                <a class="btn btn-success" id="downloadBtn">Download Excel Report</a>
+            </div>
+
+            <div class="row mt-2 gap-2" id="actionButtons">
+                <div class="col">
+                    <button class="btn btn-outline" id="backBtn" onclick="resetForm()">New Extraction</button>
+                </div>
+                <div class="col">
+                    <button class="btn btn-danger hidden" id="cancelBtn" onclick="cancelExtraction()">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="text-center mt-3" style="font-size:0.75rem;color:var(--text-sec);">
+            NMMS Tracker &mdash; Server-side Extraction
+        </div>
+    </div>
+
+    <script>
+        let currentTaskId = null;
+        let pollInterval = null;
+        let isStarting = false;
+
+        function startExtraction() {
+            if (isStarting) return;  // prevent double-click
+
+            const state = document.getElementById('stateSelect').value;
+            const district = document.getElementById('districtInput').value.trim().toUpperCase();
+            const block = document.getElementById('blockInput').value.trim().toUpperCase();
+            const date = document.getElementById('dateInput').value.trim();
+
+            if (!state || !district || !block || !date) {
+                alert('Please fill all fields!');
+                return;
+            }
+
+            isStarting = true;
+
+            // Show progress card
+            document.getElementById('formCard').classList.add('hidden');
+            document.getElementById('progressCard').classList.remove('hidden');
+            document.getElementById('cancelBtn').classList.remove('hidden');
+            document.getElementById('downloadSection').classList.add('hidden');
+            document.getElementById('startBtn').disabled = true;
+
+            updateStatus('pending', 'Starting...', []);
+            setProgress(0, 'Starting extraction...');
+
+            fetch('/api/extraction/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ state, district, block, date })
+            })
+            .then(r => { if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Server error') }); return r.json(); })
+            .then(data => {
+                currentTaskId = data.task_id;
+                pollInterval = setInterval(() => pollStatus(currentTaskId), 2000);
+            })
+            .catch(err => {
+                appendLog('Error: ' + err.message);
+                updateStatus('error', 'Failed to start', null);
+                setProgress(0, 'Failed: ' + err.message);
+                document.getElementById('cancelBtn').classList.add('hidden');
+                isStarting = false;
+            });
+        }
+
+        function pollStatus(taskId) {
+            const now = Date.now();
+            fetch('/api/extraction/status/' + taskId + '?_=' + now)
+            .then(r => { if (!r.ok) throw new Error('Status check failed'); return r.json(); })
+            .then(task => {
+                updateStatus(task.state, task.progress.message, task.log);
+                setProgress(task.progress.pct, task.progress.message);
+
+                if (task.state === 'done') {
+                    clearInterval(pollInterval);
+                    isStarting = false;
+                    document.getElementById('downloadBtn').href = '/api/extraction/download/' + taskId;
+                    document.getElementById('downloadSection').classList.remove('hidden');
+                    document.getElementById('cancelBtn').classList.add('hidden');
+                    document.getElementById('startBtn').disabled = false;
+                } else if (task.state === 'error') {
+                    clearInterval(pollInterval);
+                    isStarting = false;
+                    document.getElementById('cancelBtn').classList.add('hidden');
+                    document.getElementById('startBtn').disabled = false;
+                    // Show error details
+                    if (task.error) {
+                        appendLog('\n--- ERROR DETAILS ---\n' + task.error);
+                    }
+                } else if (task.state === 'cancelled') {
+                    clearInterval(pollInterval);
+                    isStarting = false;
+                    document.getElementById('cancelBtn').classList.add('hidden');
+                    document.getElementById('startBtn').disabled = false;
+                }
+            })
+            .catch(err => {
+                console.error('Poll error:', err);
+            });
+        }
+
+        function cancelExtraction() {
+            if (!currentTaskId) return;
+            if (!confirm('Are you sure you want to cancel the extraction?')) return;
+
+            document.getElementById('cancelBtn').disabled = true;
+            fetch('/api/extraction/cancel/' + currentTaskId, { method: 'POST' })
+            .then(r => r.json())
+            .then(() => {
+                updateStatus('cancelled', 'Cancelled', ['Cancelling...']);
+            });
+        }
+
+        function resetForm() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+            currentTaskId = null;
+            isStarting = false;
+            document.getElementById('formCard').classList.remove('hidden');
+            document.getElementById('progressCard').classList.add('hidden');
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('cancelBtn').disabled = false;
+            setProgress(0, '');
+        }
+
+        function appendLog(text) {
+            const el = document.getElementById('logArea');
+            el.textContent += (el.textContent ? '\n' : '') + text;
+            el.scrollTop = el.scrollHeight;
+        }
+
+        function updateStatus(state, message, log) {
+            const badge = document.getElementById('statusBadge');
+            badge.className = 'status-badge badge-' + state;
+            const labels = { pending: 'Pending', running: 'Running', done: 'Complete', error: 'Error', cancelled: 'Cancelled' };
+            badge.innerHTML = (state === 'running' ? '<span class="spinner"></span> ' : '') + (labels[state] || state);
+
+            if (log && log.length) {
+                document.getElementById('logArea').textContent = log.join('\n');
+                document.getElementById('logArea').scrollTop = document.getElementById('logArea').scrollHeight;
+            }
+        }
+
+        function setProgress(pct, msg) {
+            document.getElementById('progressBar').style.width = Math.round(pct) + '%';
+            document.getElementById('progressText').textContent = msg || '';
+        }
+
+        // Set default date
+        document.addEventListener('DOMContentLoaded', function() {
+            const now = new Date();
+            const dd = String(now.getDate()).padStart(2, '0');
+            const mm = String(now.getMonth() + 1).padStart(2, '0');
+            const yyyy = now.getFullYear();
+            document.getElementById('dateInput').value = dd + '/' + mm + '/' + yyyy;
+        });
+    </script>
+</body>
+</html>
+"""
+
+
+@app.route('/extraction')
+def extraction_page():
+    """Mobile-friendly web extraction dashboard."""
+    return render_template_string(EXTRACTION_HTML)
+
+
+@app.route('/api/extraction/start', methods=['POST'])
+def api_start_extraction():
+    """Start a new extraction in background thread."""
+    data = request.json
+    state = data.get('state', '').strip().upper()
+    district = data.get('district', '').strip().upper()
+    block = data.get('block', '').strip().upper()
+    date = data.get('date', '').strip()
+
+    if not all([state, district, block, date]):
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    try:
+        task_id = start_extraction(state, district, block, date)
+        return jsonify({'task_id': task_id, 'status': 'started'})
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 429
+
+
+@app.route('/api/extraction/status/<task_id>')
+def api_extraction_status(task_id):
+    """Get current status of an extraction task."""
+    task = read_task(task_id)
+    if not task:
+        return jsonify({'error': 'Task not found'}), 404
+    return jsonify({
+        'task_id': task['task_id'],
+        'state': task['state'],
+        'params': task['params'],
+        'progress': task['progress'],
+        'log': task['log'],
+        'result': task['result'],
+        'error': task['error'],
+        'created_at': task['created_at'],
+        'completed_at': task['completed_at'],
+    })
+
+
+@app.route('/api/extraction/download/<task_id>')
+def api_extraction_download(task_id):
+    """Download the generated Excel file."""
+    task = read_task(task_id)
+    if not task:
+        return jsonify({'error': 'Task not found'}), 404
+    if task['state'] != 'done':
+        return jsonify({'error': 'Task not completed yet'}), 400
+    if not task['result'] or not task['result'].get('filepath'):
+        return jsonify({'error': 'File not found'}), 404
+
+    filepath = task['result']['filepath']
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File expired or deleted'}), 404
+
+    return send_file(
+        filepath,
+        as_attachment=True,
+        download_name=task['result']['filename'],
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+
+@app.route('/api/extraction/cancel/<task_id>', methods=['POST'])
+def api_cancel_extraction(task_id):
+    """Cancel a running extraction task."""
+    ok = cancel_extraction(task_id)
+    if ok:
+        return jsonify({'status': 'cancelled'})
+    return jsonify({'error': 'Task not found or already completed'}), 400
 
 
 @app.route('/admin/extend/<mac>')

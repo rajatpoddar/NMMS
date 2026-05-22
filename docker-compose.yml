@@ -24,6 +24,19 @@ services:
     networks:
       - nmms_network
 
+  # ── Selenium Chrome for Server-side Scraping ──
+  selenium-chrome:
+    image: selenium/standalone-chrome:latest
+    container_name: nmms-selenium
+    restart: unless-stopped
+    shm_size: '2gb'
+    environment:
+      - SE_VNC_PASSWORD=nmms
+      - SE_NODE_MAX_SESSIONS=2
+      - SE_NODE_SESSION_TIMEOUT=300
+    networks:
+      - nmms_network
+
   nmms-server:
     build:
       context: .
@@ -36,6 +49,8 @@ services:
     depends_on:
       nmms-db:
         condition: service_healthy
+      selenium-chrome:
+        condition: service_healthy
     environment:
       # --- Server ---
       - SERVER_PORT=6667
@@ -45,11 +60,16 @@ services:
       - DB_NAME=nmms_tracker
       - DB_USER=nmms
       - DB_PASSWORD=${DB_PASSWORD:-nmms_password}
+      # --- Selenium ---
+      - SELENIUM_URL=http://selenium-chrome:4444/wd/hub
       # --- Performance ---
       - GUNICORN_WORKERS=2
+      - GUNICORN_TIMEOUT=600
       - LOG_LEVEL=info
       # --- License ---
       - TRIAL_DAYS=30
+    volumes:
+      - nmms_outputs:/app/outputs
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:6667/health')"]
       interval: 30s
@@ -62,6 +82,8 @@ services:
 volumes:
   nmms_postgres_data:
     # PostgreSQL data persists here across restarts
+  nmms_outputs:
+    # Shared volume for generated Excel files
 
 networks:
   nmms_network:

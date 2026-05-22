@@ -30,7 +30,12 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 
 # Copy application code
 COPY server.py .
+COPY scraper_worker.py .
 COPY entrypoint.sh .
+
+# Create output directories for extraction tasks
+RUN mkdir -p /app/outputs /app/tasks && \
+    chown appuser:appuser /app/outputs /app/tasks
 
 # Make entrypoint executable
 RUN chmod +x entrypoint.sh && chown appuser:appuser /app/*
