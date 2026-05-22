@@ -958,7 +958,7 @@ EXTRACTION_HTML = """
                 <input type="text" class="form-control" id="dateInput" placeholder="DD/MM/YYYY">
             </div>
             <div class="mt-2">
-                <button class="btn btn-primary" id="startBtn">
+                <button class="btn btn-primary" id="startBtn" type="button" onclick="startExtraction()">
                     <span id="btnText">Start Extraction</span>
                     <span class="spinner spinner-sm hidden" id="btnSpinner"></span>
                 </button>
@@ -1014,6 +1014,8 @@ EXTRACTION_HTML = """
     </div>
 
     <script>
+        console.log('[NMMS] Script loaded successfully');
+
         let currentTaskId = null;
         let pollInterval = null;
         let statsInterval = null;
@@ -1023,20 +1025,30 @@ EXTRACTION_HTML = """
 
         // ── Initialization ──
         document.addEventListener('DOMContentLoaded', function() {
-            const now = new Date();
-            document.getElementById('dateInput').value =
-                String(now.getDate()).padStart(2, '0') + '/' +
-                String(now.getMonth() + 1).padStart(2, '0') + '/' +
-                now.getFullYear();
+            console.log('[NMMS] DOMContentLoaded fired');
+            try {
+                const now = new Date();
+                document.getElementById('dateInput').value =
+                    String(now.getDate()).padStart(2, '0') + '/' +
+                    String(now.getMonth() + 1).padStart(2, '0') + '/' +
+                    now.getFullYear();
 
-            // Bind events using addEventListener (safer than onclick)
-            document.getElementById('startBtn').addEventListener('click', startExtraction);
-            document.getElementById('cancelBtn').addEventListener('click', cancelExtraction);
-            document.getElementById('backBtn').addEventListener('click', resetForm);
+                // Bind events via addEventListener too
+                var sb = document.getElementById('startBtn');
+                console.log('[NMMS] startBtn found:', sb !== null);
+                if (sb) sb.addEventListener('click', startExtraction);
+                var cb = document.getElementById('cancelBtn');
+                if (cb) cb.addEventListener('click', cancelExtraction);
+                var bb = document.getElementById('backBtn');
+                if (bb) bb.addEventListener('click', resetForm);
 
-            // Start stats polling immediately
-            statsInterval = setInterval(fetchStats, 3000);
-            fetchStats();
+                // Start stats polling immediately
+                statsInterval = setInterval(fetchStats, 3000);
+                fetchStats();
+                console.log('[NMMS] Initialization complete');
+            } catch(e) {
+                console.error('[NMMS] Init error:', e);
+            }
         });
 
         // ── Stats ──
