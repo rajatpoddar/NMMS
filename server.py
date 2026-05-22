@@ -1156,9 +1156,9 @@ EXTRACTION_HTML = """
                     document.getElementById('btnText').textContent = 'Start Extraction';
                     document.getElementById('btnSpinner').classList.add('hidden');
                     if (task.error) {
-                        appendLog('\n--- ERROR DETAILS ---');
+                        appendLog('\\n--- ERROR DETAILS ---');
                         // Show first few lines of traceback
-                        const lines = task.error.split('\n').slice(0, 10);
+                        const lines = task.error.split('\\n').slice(0, 10);
                         lines.forEach(l => appendLog(l));
                     }
                 } else if (task.state === 'cancelled') {
@@ -1234,7 +1234,7 @@ EXTRACTION_HTML = """
 
             // Log
             if (log && log.length) {
-                document.getElementById('logArea').textContent = log.join('\n');
+                document.getElementById('logArea').textContent = log.join('\\n');
                 document.getElementById('logArea').scrollTop = document.getElementById('logArea').scrollHeight;
             }
         }
@@ -1318,7 +1318,7 @@ EXTRACTION_HTML = """
         // ── Helpers ──
         function appendLog(text) {
             const el = document.getElementById('logArea');
-            el.textContent += (el.textContent ? '\n' : '') + text;
+            el.textContent += (el.textContent ? '\\n' : '') + text;
             el.scrollTop = el.scrollHeight;
         }
 
