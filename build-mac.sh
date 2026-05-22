@@ -55,7 +55,7 @@ import sys
 import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 print('Checking imports...')
-import customtkinter; print('[OK] customtkinter')
+from PySide6 import QtWidgets, QtCore, QtGui; print('[OK] PySide6')
 import requests; print('[OK] requests')
 from bs4 import BeautifulSoup; print('[OK] bs4')
 from selenium import webdriver; print('[OK] selenium')
@@ -84,16 +84,28 @@ echo ""
 pyinstaller --onedir \
     --windowed \
     --name "NMMS_Tracker" \
-    --hidden-import customtkinter \
-    --hidden-import PIL._tkinter_finder \
+    --hidden-import PySide6 \
+    --hidden-import PySide6.QtCore \
+    --hidden-import PySide6.QtGui \
+    --hidden-import PySide6.QtWidgets \
+    --hidden-import PySide6.QtSvg \
+    --hidden-import shiboken6 \
+    --collect-submodules PySide6 \
     --hidden-import selenium \
+    --hidden-import selenium.webdriver.chrome.webdriver \
+    --hidden-import selenium.webdriver.chrome.service \
+    --hidden-import selenium.webdriver.chrome.options \
+    --hidden-import selenium.webdriver.common.by \
+    --hidden-import selenium.webdriver.support.ui \
+    --hidden-import selenium.webdriver.support.expected_conditions \
     --hidden-import webdriver_manager \
     --hidden-import webdriver_manager.chrome \
     --hidden-import openpyxl \
     --hidden-import pandas \
     --hidden-import bs4 \
     --hidden-import getmac \
-    --hidden-import jinja2 \
+    --hidden-import pyperclip \
+    --hidden-import PIL._tkinter_finder \
     app.py
 
 # To add a custom app icon, uncomment and adjust:
